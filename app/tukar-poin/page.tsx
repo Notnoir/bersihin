@@ -1,0 +1,84 @@
+import { TukarPoinClient } from "@/components/tukar-poin/tukar-poin-layout";
+import { EnvVarWarning } from "@/components/env-var-warning";
+import { AuthButton } from "@/components/auth-button";
+import { hasEnvVars } from "@/lib/utils";
+import MenuDropdown from "@/components/maps/menu";
+import { Navbar } from "@/components/common/navbar";
+
+const pulsaOptions = [
+  {
+    id: 1,
+    provider: "XL",
+    nominal: 5000,
+    pointCost: 1000,
+    logo: "/logo-provider/xl.png",
+  },
+  {
+    id: 2,
+    provider: "XL",
+    nominal: 20000,
+    pointCost: 5000,
+    logo: "/logo-provider/xl.png",
+  },
+  {
+    id: 3,
+    provider: "Telkomsel",
+    nominal: 5000,
+    pointCost: 1000,
+    logo: "/logo-provider/telkomsel.png",
+  },
+  {
+    id: 4,
+    provider: "Telkomsel",
+    nominal: 20000,
+    pointCost: 5000,
+    logo: "/logo-provider/telkomsel.png",
+  },
+  {
+    id: 5,
+    provider: "im3",
+    nominal: 5000,
+    pointCost: 1000,
+    logo: "/logo-provider/im3.png",
+  },
+  {
+    id: 6,
+    provider: "im3",
+    nominal: 20000,
+    pointCost: 5000,
+    logo: "/logo-provider/im3.png",
+  },
+];
+
+async function getUserData() {
+  return {
+    expiryDate: "8 Feb 2026",
+  };
+}
+
+export default async function TukarPoinPage() {
+  const userData = await getUserData();
+
+  return (
+    <>
+      <Navbar title="Tukar Poin"/>
+      <main className="min-h-screen">
+        <div className="flex-1 w-full flex flex-col items-center">
+          <nav className="w-full flex justify-center border-b border-b-foreground/10 h-16">
+            <div className="w-full max-w-5xl flex justify-between items-center p-3 px-5 text-sm">
+              <div className="flex items-center gap-3">
+                <MenuDropdown />
+                {!hasEnvVars ? <EnvVarWarning /> : <AuthButton />}
+              </div>
+            </div>
+          </nav>
+
+          <TukarPoinClient
+            expiryDate={userData.expiryDate}
+            pulsaOptions={pulsaOptions}
+          />
+        </div>
+      </main>
+    </>
+  );
+}

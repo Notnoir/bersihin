@@ -4,12 +4,12 @@ import { AuthButton } from "../auth-button";
 import Link from "next/link";
 import MenuDropdown from "../maps/menu";
 
-export const Navbar = ({ title }: { title: string }) => {
+export const Navbar = ({ title, route="map" }: { title: string, route?: string }) => {
   return (
     <header className="fixed top-0 left-0 right-0 z-20 bg-gray-50">
       <nav className="w-full max-w-7xl mx-auto flex justify-between items-center p-2 px-5">
         <div className="flex items-center gap-3 font-semibold">
-          <Link href="/map" className="hover:opacity-80">
+          <Link href={`/${route}`} className="hover:opacity-80">
             <ArrowLeft />
           </Link>
           <span>{title}</span>

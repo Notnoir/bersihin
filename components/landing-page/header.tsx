@@ -42,7 +42,7 @@ const Header: React.FC<HeaderProps> = ({ authComponent }) => {
               <MapPin className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
             </div>
             <span className="text-xl sm:text-2xl font-bold text-gray-900">
-              Sampahin
+              Bersihin
             </span>
           </div>
 
