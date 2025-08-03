@@ -1,6 +1,8 @@
 # Bersihin
 
-**Bersihin** adalah platform web kolaboratif berbasis AI yang memungkinkan pengguna untuk melakukan *grading* kebersihan lokasi dan beraksi bersama melalui peta interaktif. Aplikasi ini bertujuan untuk mendorong partisipasi masyarakat dalam menjaga kebersihan lingkungan dengan fitur-fitur cerdas dan kolaboratif.
+**Bersihin** adalah platform web kolaboratif berbasis AI yang memungkinkan pengguna untuk melakukan _grading_ kebersihan lokasi dan beraksi bersama melalui peta interaktif. Aplikasi ini bertujuan untuk mendorong partisipasi masyarakat dalam menjaga kebersihan lingkungan dengan fitur-fitur cerdas dan kolaboratif.
+
+Link website https://bersihin-sigma.vercel.app/
 
 ---
 
@@ -28,22 +30,22 @@
 
 ## Struktur Path Halaman
 
-| Path                         | Deskripsi Halaman                                      |
-|-----------------------------|---------------------------------------------------------|
-| `/`                         | Halaman utama / landing page                            |
-| `/map`                      | Peta lokasi kebersihan dan titik aksi                   |
-| `/grading`                  | Upload foto dan grading kebersihan menggunakan AI       |
-| `/scan-sampah`              | Pemindaian sampah menggunakan kamera + AI               |
-| `/profile`                  | Profil pengguna dan riwayat aktivitas                   |
-| `/tukar-poin`               | Untuk menukar poin dengan hadiah                        |
-| `/riwayat-poin`             | Untuk melihat riwayat transaksi poin                    |
-| `/auth/login`               | Login pengguna                                          |
-| `/auth/sign-up`             | Registrasi pengguna baru                                |
+| Path            | Deskripsi Halaman                                 |
+| --------------- | ------------------------------------------------- |
+| `/`             | Halaman utama / landing page                      |
+| `/map`          | Peta lokasi kebersihan dan titik aksi             |
+| `/grading`      | Upload foto dan grading kebersihan menggunakan AI |
+| `/scan-sampah`  | Pemindaian sampah menggunakan kamera + AI         |
+| `/profile`      | Profil pengguna dan riwayat aktivitas             |
+| `/tukar-poin`   | Untuk menukar poin dengan hadiah                  |
+| `/riwayat-poin` | Untuk melihat riwayat transaksi poin              |
+| `/auth/login`   | Login pengguna                                    |
+| `/auth/sign-up` | Registrasi pengguna baru                          |
 
 ---
 
 ## Tech Stack
 
 - **Frontend:** Next.js + Tailwind CSS + React Leaflet
-- **Backend:** Supabase  
-- **AI Model:** Google Gemini (Gemma 3)  
+- **Backend:** Supabase
+- **AI Model:** Google Gemini (Gemma 3)
