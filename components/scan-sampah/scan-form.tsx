@@ -1,11 +1,12 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { useState, useRef} from "react";
-import { Camera, Upload, X } from "lucide-react";
+import { useState, useRef } from "react";
+import { Camera, Upload, X, Loader2 } from "lucide-react";
 import Image from "next/image";
 import { useUserStore } from "@/lib/store/user-store";
 import { createClient } from "@/lib/supabase/client";
+import { compressImage } from "@/lib/utils/image-compressor";
 
 export const ScanForm = () => {
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
@@ -14,28 +15,47 @@ export const ScanForm = () => {
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [isNotTrash, setIsNotTrash] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false); // State untuk loading upload
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment"); // Default ke kamera belakang
+  const [facingMode, setFacingMode] = useState<"user" | "environment">(
+    "environment"
+  ); // Default ke kamera belakang
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const user = useUserStore((state) => state.user);
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = event.target.files?.[0];
     if (file) {
-      setSelectedImage(file);
-      const url = URL.createObjectURL(file);
-      setPreviewUrl(url);
+      setIsUploading(true); // Set loading state
       setAnalysisResult(null);
       setIsNotTrash(false);
+
+      try {
+        // Kompres gambar jika ukurannya > 2MB
+        const compressedFile = await compressImage(file, 2);
+        setSelectedImage(compressedFile);
+        const url = URL.createObjectURL(compressedFile);
+        setPreviewUrl(url);
+      } catch (error) {
+        console.error("Error compressing image:", error);
+        // Fallback ke file asli jika kompresi gagal
+        setSelectedImage(file);
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+      } finally {
+        setIsUploading(false); // Reset loading state
+      }
     }
   };
 
   const startCamera = async () => {
     setCameraError(null);
     setIsCapturing(true); // Set capturing state immediately to show UI feedback
-    
+
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Camera API not supported in this browser");
@@ -65,7 +85,7 @@ export const ScanForm = () => {
       } catch (backCameraError) {
         console.error("Back camera access failed:", backCameraError);
         console.log("Back camera access failed, trying front camera");
-        
+
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
             video: {
@@ -90,8 +110,10 @@ export const ScanForm = () => {
           }
         } catch (frontCameraError) {
           console.error("Front camera access failed:", frontCameraError);
-          console.log("Front camera access failed, trying generic camera access");
-          
+          console.log(
+            "Front camera access failed, trying generic camera access"
+          );
+
           // Last resort - try generic video access
           try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -142,7 +164,7 @@ export const ScanForm = () => {
   const toggleCamera = async () => {
     // Show loading state or indicator
     setCameraError(null);
-    
+
     // Stop current camera stream
     if (videoRef.current && videoRef.current.srcObject) {
       const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
@@ -178,12 +200,12 @@ export const ScanForm = () => {
     } catch (error) {
       console.error("Error toggling camera:", error);
       setCameraError("Gagal mengganti kamera. Silakan coba lagi.");
-      
+
       // Try the opposite camera as fallback
       try {
         const fallbackMode = newFacingMode === "user" ? "environment" : "user";
         setFacingMode(fallbackMode);
-        
+
         const fallbackStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: fallbackMode,
@@ -191,7 +213,7 @@ export const ScanForm = () => {
             height: { ideal: 720 },
           },
         });
-        
+
         if (videoRef.current) {
           videoRef.current.srcObject = fallbackStream;
           videoRef.current.onloadedmetadata = () => {
@@ -201,16 +223,21 @@ export const ScanForm = () => {
               setIsCapturing(false); // Reset capturing state on error
             });
           };
-          setCameraError("Kamera yang dipilih tidak tersedia, menggunakan kamera alternatif.");
+          setCameraError(
+            "Kamera yang dipilih tidak tersedia, menggunakan kamera alternatif."
+          );
         }
       } catch (fallbackError) {
         console.error("Error with fallback camera:", fallbackError);
-        setCameraError("Tidak dapat mengakses kamera. Silakan periksa izin kamera di browser Anda.");
+        setCameraError(
+          "Tidak dapat mengakses kamera. Silakan periksa izin kamera di browser Anda."
+        );
         setIsCapturing(false); // Reset capturing state on complete failure
       }
     }
   };
 
+  // Modifikasi capturePhoto untuk menggunakan kompresi
   const capturePhoto = () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
@@ -218,21 +245,37 @@ export const ScanForm = () => {
       const context = canvas.getContext("2d");
 
       if (context) {
+        setIsUploading(true); // Set loading state untuk capture
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         context.drawImage(video, 0, 0);
 
         canvas.toBlob(
-          (blob) => {
+          async (blob) => {
             if (blob) {
               const file = new File([blob], "camera-photo.jpg", {
                 type: "image/jpeg",
               });
-              setSelectedImage(file);
-              setPreviewUrl(URL.createObjectURL(file));
-              setAnalysisResult(null);
-              setIsNotTrash(false);
-              stopCamera();
+
+              try {
+                // Kompres gambar jika ukurannya > 2MB
+                const compressedFile = await compressImage(file, 2);
+                setSelectedImage(compressedFile);
+                setPreviewUrl(URL.createObjectURL(compressedFile));
+                setAnalysisResult(null);
+                setIsNotTrash(false);
+                stopCamera();
+              } catch (error) {
+                console.error("Error compressing image:", error);
+                // Fallback ke file asli jika kompresi gagal
+                setSelectedImage(file);
+                setPreviewUrl(URL.createObjectURL(file));
+                setAnalysisResult(null);
+                setIsNotTrash(false);
+                stopCamera();
+              } finally {
+                setIsUploading(false); // Reset loading state
+              }
             }
           },
           "image/jpeg",
@@ -313,31 +356,31 @@ export const ScanForm = () => {
     } finally {
       setIsAnalyzing(false);
       const fetchMissions = async () => {
-      const supabase = createClient();
-      if (!user?.id) return;
-      const { data, error } = await supabase
-        .from("daily_missions_with_status")
-        .select("*")
-        .eq(`user_id`, user.id)
-        .eq('mission_id', 'b2d3dba2-ef1b-4396-b098-47524b407709')
-        .order("point_reward", { ascending: true });
-      if (error) {
-        console.error("Error fetching missions:", error.message);
-      }
-      if (data?.length == 0) {
-        await supabase
-          .from('user_mission_logs')
-          .insert([
-            { user_id: user.id, mission_id: 'b2d3dba2-ef1b-4396-b098-47524b407709', completed_at : new Date().toISOString(), point_earned:10},
-          ])
-      }
-
-    };
-    fetchMissions()
+        const supabase = createClient();
+        if (!user?.id) return;
+        const { data, error } = await supabase
+          .from("daily_missions_with_status")
+          .select("*")
+          .eq(`user_id`, user.id)
+          .eq("mission_id", "b2d3dba2-ef1b-4396-b098-47524b407709")
+          .order("point_reward", { ascending: true });
+        if (error) {
+          console.error("Error fetching missions:", error.message);
+        }
+        if (data?.length == 0) {
+          await supabase.from("user_mission_logs").insert([
+            {
+              user_id: user.id,
+              mission_id: "b2d3dba2-ef1b-4396-b098-47524b407709",
+              completed_at: new Date().toISOString(),
+              point_earned: 10,
+            },
+          ]);
+        }
+      };
+      fetchMissions();
     }
   };
-
-    
 
   return (
     <div className=" bg-gray-50 p-4">
@@ -346,7 +389,9 @@ export const ScanForm = () => {
         <div className="bg-white rounded-lg shadow-sm px-6 py-2">
           {/* Foto Label */}
           <div className="mb-4">
-            <h2 className="text-sm font-medium text-gray-700 mb-3">Foto Sampah untuk Scan (misal Botol)</h2>
+            <h2 className="text-sm font-medium text-gray-700 mb-3">
+              Foto Sampah untuk Scan (misal Botol)
+            </h2>
 
             {/* Upload Options */}
             <div className="flex gap-2 mb-4">
@@ -354,11 +399,15 @@ export const ScanForm = () => {
                 type="button"
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 text-xs px-3 py-1.5 h-8 rounded-full  border-blue-200 text-blue-600 hover:bg-blue-50"
-                disabled={isCapturing}
+                className="flex items-center gap-2 text-xs px-3 py-1.5 h-8 rounded-full border-blue-200 text-blue-600 hover:bg-blue-50"
+                disabled={isCapturing || isUploading}
               >
-                <Upload className="w-3 h-3" />
-                Pilih Foto
+                {isUploading ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Upload className="w-3 h-3" />
+                )}
+                {isUploading ? "Memproses..." : "Pilih Foto"}
               </Button>
 
               <Button
@@ -366,7 +415,7 @@ export const ScanForm = () => {
                 variant="outline"
                 onClick={startCamera}
                 className="flex items-center gap-2 text-xs px-3 py-1.5 h-8 rounded-full border-blue-200 text-blue-600 hover:bg-blue-50"
-                disabled={isCapturing}
+                disabled={isCapturing || isUploading}
               >
                 <Camera className="w-3 h-3" />
                 Buka Kamera
@@ -379,8 +428,21 @@ export const ScanForm = () => {
               accept="image/*"
               onChange={handleFileSelect}
               className="hidden"
+              disabled={isUploading}
             />
           </div>
+
+          {/* Loading Upload State */}
+          {isUploading && (
+            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center justify-center gap-3">
+                <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                <span className="text-blue-700 text-sm font-medium">
+                  Memproses gambar...
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Camera Error */}
           {cameraError && (
@@ -404,22 +466,32 @@ export const ScanForm = () => {
                   <Button
                     type="button"
                     onClick={toggleCamera}
-                    className="bg-gray-500 hover:bg-gray-600 text-white text-xs px-4 py-2 h-8"
+                    className="bg-gray-500 hover:bg-gray-600 text-white text-xs px-4 py-2 h-8 rounded-full"
+                    disabled={isUploading}
                   >
                     Ganti Kamera
                   </Button>
                   <Button
                     type="button"
                     onClick={capturePhoto}
-                    className="bg-blue-500 hover:bg-blue-600 text-white text-xs px-4 py-2 h-8"
+                    className="bg-blue-500 hover:bg-blue-600 text-white text-xs px-4 py-2 h-8 rounded-full"
+                    disabled={isUploading}
                   >
-                    Ambil Foto
+                    {isUploading ? (
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Memproses...
+                      </div>
+                    ) : (
+                      "Ambil Foto"
+                    )}
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
                     onClick={stopCamera}
-                    className="text-xs px-4 py-2 h-8"
+                    className="text-xs px-4 py-2 h-8 rounded-full"
+                    disabled={isUploading}
                   >
                     Batal
                   </Button>
@@ -429,7 +501,7 @@ export const ScanForm = () => {
           )}
 
           {/* Image Preview */}
-          {previewUrl && !isCapturing && (
+          {previewUrl && !isCapturing && !isUploading && (
             <div className="mb-4">
               <div className="relative">
                 <Image
@@ -478,6 +550,7 @@ export const ScanForm = () => {
                   }}
                   variant="outline"
                   className="w-full py-3 text-sm font-medium rounded-full"
+                  disabled={isUploading}
                 >
                   Coba Gambar Lain
                 </Button>
@@ -490,6 +563,7 @@ export const ScanForm = () => {
                   }}
                   variant="outline"
                   className="w-full py-3 text-sm font-medium rounded-full"
+                  disabled={isUploading}
                 >
                   Analisis Gambar Lain
                 </Button>
@@ -498,10 +572,17 @@ export const ScanForm = () => {
           ) : (
             <Button
               onClick={handleAnalysis}
-              disabled={!selectedImage || isAnalyzing}
+              disabled={!selectedImage || isAnalyzing || isUploading}
               className="w-full bg-teal-500 hover:bg-teal-600 text-white py-3 text-sm font-medium rounded-full"
             >
-              {isAnalyzing ? "Menganalisis..." : "Analisis"}
+              {isAnalyzing ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Menganalisis...
+                </div>
+              ) : (
+                "Analisis"
+              )}
             </Button>
           )}
         </div>

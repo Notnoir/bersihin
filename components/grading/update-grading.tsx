@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useState, useRef, useEffect } from "react";
-import { Camera, Upload, X } from "lucide-react";
+import { Camera, Upload, X, Loader2 } from "lucide-react";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
@@ -10,6 +10,7 @@ import { useParams } from "next/navigation";
 import { LocationType } from "@/types/location";
 import { mimeToExt } from "@/lib/utils";
 import { useUserStore } from "@/lib/store/user-store";
+import { compressImage } from "@/lib/utils/image-compressor";
 
 const CoordinatePicker = dynamic(() => import("../common/coordinat-picker"), {
   ssr: false,
@@ -22,17 +23,20 @@ interface AnalysisResultProps {
 }
 
 export const UpdateGradingForm = () => {
-    const supabase = createClient()
-    const params = useParams();
-    const placeId = params.place_id
+  const supabase = createClient();
+  const params = useParams();
+  const placeId = params.place_id;
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [isLoading, setLoading] = useState(false);
+  const [isUploading, setIsUploading] = useState(false); // State untuk loading upload
   const [location, setLocation] = useState<LocationType[] | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment"); // Default ke kamera belakang
+  const [facingMode, setFacingMode] = useState<"user" | "environment">(
+    "environment"
+  );
 
   const [analysisResult, setAnalysisResult] =
     useState<AnalysisResultProps | null>(null);
@@ -42,20 +46,82 @@ export const UpdateGradingForm = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const user = useUserStore((state) => state.user);
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = event.target.files?.[0];
     if (file) {
-      setSelectedImage(file);
-      const url = URL.createObjectURL(file);
-      setPreviewUrl(url);
+      setIsUploading(true); // Set loading state
       setAnalysisResult(null);
+
+      try {
+        // Kompres gambar jika ukurannya > 2MB
+        const compressedFile = await compressImage(file, 2);
+        setSelectedImage(compressedFile);
+        const url = URL.createObjectURL(compressedFile);
+        setPreviewUrl(url);
+      } catch (error) {
+        console.error("Error compressing image:", error);
+        // Fallback ke file asli jika kompresi gagal
+        setSelectedImage(file);
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+      } finally {
+        setIsUploading(false); // Reset loading state
+      }
+    }
+  };
+
+  // Modifikasi capturePhoto untuk menggunakan kompresi
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const context = canvas.getContext("2d");
+
+      if (context) {
+        setIsUploading(true); // Set loading state untuk capture
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0);
+
+        canvas.toBlob(
+          async (blob) => {
+            if (blob) {
+              const file = new File([blob], "camera-photo.jpg", {
+                type: "image/jpeg",
+              });
+
+              try {
+                // Kompres gambar jika ukurannya > 2MB
+                const compressedFile = await compressImage(file, 2);
+                setSelectedImage(compressedFile);
+                setPreviewUrl(URL.createObjectURL(compressedFile));
+                setAnalysisResult(null);
+                stopCamera();
+              } catch (error) {
+                console.error("Error compressing image:", error);
+                // Fallback ke file asli jika kompresi gagal
+                setSelectedImage(file);
+                setPreviewUrl(URL.createObjectURL(file));
+                setAnalysisResult(null);
+                stopCamera();
+              } finally {
+                setIsUploading(false); // Reset loading state
+              }
+            }
+          },
+          "image/jpeg",
+          0.9
+        );
+      }
     }
   };
 
   const startCamera = async () => {
     setCameraError(null);
     setIsCapturing(true); // Set capturing state immediately to show UI feedback
-    
+
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Camera API not supported in this browser");
@@ -169,7 +235,7 @@ export const UpdateGradingForm = () => {
   const toggleCamera = async () => {
     // Show loading state or indicator
     setCameraError(null);
-    
+
     // Stop current camera stream
     if (videoRef.current && videoRef.current.srcObject) {
       const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
@@ -205,12 +271,12 @@ export const UpdateGradingForm = () => {
     } catch (error) {
       console.error("Error toggling camera:", error);
       setCameraError("Gagal mengganti kamera. Silakan coba lagi.");
-      
+
       // Try the opposite camera as fallback
       try {
         const fallbackMode = newFacingMode === "user" ? "environment" : "user";
         setFacingMode(fallbackMode);
-        
+
         const fallbackStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: fallbackMode,
@@ -218,7 +284,7 @@ export const UpdateGradingForm = () => {
             height: { ideal: 720 },
           },
         });
-        
+
         if (videoRef.current) {
           videoRef.current.srcObject = fallbackStream;
           videoRef.current.onloadedmetadata = () => {
@@ -228,42 +294,16 @@ export const UpdateGradingForm = () => {
               setIsCapturing(false); // Reset capturing state on error
             });
           };
-          setCameraError("Kamera yang dipilih tidak tersedia, menggunakan kamera alternatif.");
+          setCameraError(
+            "Kamera yang dipilih tidak tersedia, menggunakan kamera alternatif."
+          );
         }
       } catch (fallbackError) {
         console.error("Error with fallback camera:", fallbackError);
-        setCameraError("Tidak dapat mengakses kamera. Silakan periksa izin kamera di browser Anda.");
-        setIsCapturing(false); // Reset capturing state on complete failure
-      }
-    }
-  };
-
-  const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const context = canvas.getContext("2d");
-
-      if (context) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        context.drawImage(video, 0, 0);
-
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              const file = new File([blob], "camera-photo.jpg", {
-                type: "image/jpeg",
-              });
-              setSelectedImage(file);
-              setPreviewUrl(URL.createObjectURL(file));
-              setAnalysisResult(null);
-              stopCamera();
-            }
-          },
-          "image/jpeg",
-          0.9
+        setCameraError(
+          "Tidak dapat mengakses kamera. Silakan periksa izin kamera di browser Anda."
         );
+        setIsCapturing(false); // Reset capturing state on complete failure
       }
     }
   };
@@ -345,346 +385,392 @@ export const UpdateGradingForm = () => {
       setIsAnalyzing(false);
     }
   };
-  useEffect(()=>{
+  useEffect(() => {
     const getLocation = async () => {
-        const { data: locations, error } = await supabase
-          .from('locations')
-          .select("*")
-          .eq('id', placeId)
-      
-          if (error) console.error(error)
+      const { data: locations, error } = await supabase
+        .from("locations")
+        .select("*")
+        .eq("id", placeId);
 
-        setLocation(locations)
-    }
-    
-    getLocation()
-  },[placeId, supabase])
+      if (error) console.error(error);
+
+      setLocation(locations);
+    };
+
+    getLocation();
+  }, [placeId, supabase]);
 
   const updateReport = async () => {
     if (selectedImage && location) {
-        setLoading(true);
+      setLoading(true);
 
-        const authRes = await supabase.auth.getUser();
-        const fileExt = mimeToExt[selectedImage.type as keyof typeof mimeToExt] || "";
-        const safeName = location[0].name.replace(/\s+/g, "-").toLowerCase();
-        const filePath = `locations/${safeName}_${Date.now()}${fileExt}`;
+      const authRes = await supabase.auth.getUser();
+      const fileExt =
+        mimeToExt[selectedImage.type as keyof typeof mimeToExt] || "";
+      const safeName = location[0].name.replace(/\s+/g, "-").toLowerCase();
+      const filePath = `locations/${safeName}_${Date.now()}${fileExt}`;
 
-        try {
-          // 1. Ambil data lokasi lama dulu untuk dapat URL lama
-          const current = await supabase
+      try {
+        // 1. Ambil data lokasi lama dulu untuk dapat URL lama
+        const current = await supabase
           .from("locations")
           .select("img_url")
           .eq("id", placeId)
           .single();
-          
-          // 2. Hapus gambar lama jika ada
-          if (current.data?.img_url) {
-            const fullPath = current.data.img_url.split("/object/public/")[1]; 
-            const pathInBucket = fullPath.split("/").slice(1).join("/"); 
 
-            await supabase.storage
-                .from("sampahin")
-                .remove([pathInBucket]);
-          }
+        // 2. Hapus gambar lama jika ada
+        if (current.data?.img_url) {
+          const fullPath = current.data.img_url.split("/object/public/")[1];
+          const pathInBucket = fullPath.split("/").slice(1).join("/");
 
-          // 3. Upload gambar baru
-          const storageRes = await supabase.storage
+          await supabase.storage.from("sampahin").remove([pathInBucket]);
+        }
+
+        // 3. Upload gambar baru
+        const storageRes = await supabase.storage
           .from("sampahin")
           .upload(filePath, selectedImage);
-          if (storageRes.error) throw storageRes.error;
+        if (storageRes.error) throw storageRes.error;
 
-          // 4. Ambil URL publik
-          const {
+        // 4. Ambil URL publik
+        const {
           data: { publicUrl },
-          } = await supabase.storage.from("sampahin").getPublicUrl(filePath);
+        } = await supabase.storage.from("sampahin").getPublicUrl(filePath);
 
-          // 5. Tentukan tipe lokasi berdasarkan grade
-          const locationType = 
-            analysisResult?.grade === "A" || analysisResult?.grade === "B" 
-              ? "clean" 
-              : "dirty";
+        // 5. Tentukan tipe lokasi berdasarkan grade
+        const locationType =
+          analysisResult?.grade === "A" || analysisResult?.grade === "B"
+            ? "clean"
+            : "dirty";
 
-          // 6. Update lokasi dengan URL gambar baru dan tipe berdasarkan grade
-          const locationRes = await supabase
+        // 6. Update lokasi dengan URL gambar baru dan tipe berdasarkan grade
+        const locationRes = await supabase
           .from("locations")
           .update([
-              {
-                img_url: publicUrl,
-                type: locationType // Update tipe lokasi berdasarkan grade
-              },
+            {
+              img_url: publicUrl,
+              type: locationType, // Update tipe lokasi berdasarkan grade
+            },
           ])
           .eq("id", placeId)
           .select("id");
 
-          if (!locationRes.data) throw locationRes.error;
+        if (!locationRes.data) throw locationRes.error;
 
-          // 7. Tambahkan laporan kebersihan
-          const cleanlinessRes = await supabase
+        // 7. Tambahkan laporan kebersihan
+        const cleanlinessRes = await supabase
           .from("cleanliness_reports")
           .insert([
-              {
+            {
               reporter: authRes.data.user?.id,
               location: placeId,
               score: analysisResult?.skor_kebersihan,
               grade: analysisResult?.grade,
               ai_description: analysisResult?.deskripsi,
-              },
+            },
           ])
           .select();
 
-          if (cleanlinessRes.error) throw cleanlinessRes.error;
+        if (cleanlinessRes.error) throw cleanlinessRes.error;
 
-          // 8. Hapus semua pembersih dari location_cleaners karena lokasi sudah selesai dibersihkan
-          await supabase
-            .from("location_cleaners")
-            .delete()
-            .eq("location_id", placeId);
-
-          // Redirect ke halaman peta setelah berhasil
-          window.location.href = "/map";
-        } catch (error) {
-          console.error("Error updating report:", error);
-          alert("Terjadi kesalahan saat memperbarui laporan. Silakan coba lagi.");
-        } finally {
-          setLoading(false);
-          const fetchMissions = async () => {
-      const supabase = createClient();
-      if (!user?.id) return;
-      const { data, error } = await supabase
-        .from("daily_missions_with_status")
-        .select("*")
-        .eq(`user_id`, user.id)
-        .eq('mission_id', '00ef9788-16e5-4658-9522-1fcb8ae42820')
-        .order("point_reward", { ascending: true });
-      if (error) {
-        console.error("Error fetching missions:", error.message);
-      }
-      if (data?.length == 0) {
+        // 8. Hapus semua pembersih dari location_cleaners karena lokasi sudah selesai dibersihkan
         await supabase
-          .from('user_mission_logs')
-          .insert([
-            { user_id: user.id, mission_id: '00ef9788-16e5-4658-9522-1fcb8ae42820', completed_at : new Date().toISOString(), point_earned:20},
-          ])
+          .from("location_cleaners")
+          .delete()
+          .eq("location_id", placeId);
+
+        // Redirect ke halaman peta setelah berhasil
+        window.location.href = "/map";
+      } catch (error) {
+        console.error("Error updating report:", error);
+        alert("Terjadi kesalahan saat memperbarui laporan. Silakan coba lagi.");
+      } finally {
+        setLoading(false);
+        const fetchMissions = async () => {
+          const supabase = createClient();
+          if (!user?.id) return;
+          const { data, error } = await supabase
+            .from("daily_missions_with_status")
+            .select("*")
+            .eq(`user_id`, user.id)
+            .eq("mission_id", "00ef9788-16e5-4658-9522-1fcb8ae42820")
+            .order("point_reward", { ascending: true });
+          if (error) {
+            console.error("Error fetching missions:", error.message);
+          }
+          if (data?.length == 0) {
+            await supabase.from("user_mission_logs").insert([
+              {
+                user_id: user.id,
+                mission_id: "00ef9788-16e5-4658-9522-1fcb8ae42820",
+                completed_at: new Date().toISOString(),
+                point_earned: 20,
+              },
+            ]);
+          }
+        };
+        fetchMissions();
       }
-
-    };
-    fetchMissions()
     }
-    }
-    };
-
-  
+  };
 
   if (location)
-  return (
-    <div className="bg-gray-50 p-4 min-h-screen">
-      <div className="max-w-2xl mx-auto py-10">
-        {/* Main Content Card */}
-        <div className="bg-white rounded-lg shadow-sm px-6 py-2">
-          {/* Foto Label */}
-          <div className="mb-4">
-            <h2 className="text-xl font-bold mb-5">Laporkan Kondisi Terkini</h2>
-            <CoordinatePicker
+    return (
+      <div className="bg-gray-50 p-4 min-h-screen">
+        <div className="max-w-2xl mx-auto py-10">
+          {/* Main Content Card */}
+          <div className="bg-white rounded-lg shadow-sm px-6 py-2">
+            {/* Foto Label */}
+            <div className="mb-4">
+              <h2 className="text-xl font-bold mb-5">
+                Laporkan Kondisi Terkini
+              </h2>
+              <CoordinatePicker
                 value={[location[0].lan, location[0].lat]}
                 readOnly={true}
-            />
-            <p className="my-2 font-medium">{location[0].name}</p>
-            <p className="text-sm text-gray-500">{location[0].address}</p>
-            <h2 className="text-sm font-medium text-gray-700 mb-3 mt-6">Foto Lokasi untuk di grading</h2>
+              />
+              <p className="my-2 font-medium">{location[0].name}</p>
+              <p className="text-sm text-gray-500">{location[0].address}</p>
+              <h2 className="text-sm font-medium text-gray-700 mb-3 mt-6">
+                Foto Lokasi untuk di grading
+              </h2>
 
-            {/* Upload Options */}
-            <div className="flex gap-2 mb-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 text-xs px-3 py-1.5 h-8 rounded-full border-blue-200 text-blue-600 hover:bg-blue-50"
-                disabled={isCapturing}
-              >
-                <Upload className="w-3 h-3" />
-                Pilih Foto
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={startCamera}
-                className="flex items-center gap-2 text-xs px-3 py-1.5 h-8 rounded-full border-blue-200 text-blue-600 hover:bg-blue-50"
-                disabled={isCapturing}
-              >
-                <Camera className="w-3 h-3" />
-                Buka Kamera
-              </Button>
-            </div>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-          </div>
-
-          {/* Camera Error */}
-          {cameraError && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
-              {cameraError}
-            </div>
-          )}
-
-          {/* Camera View */}
-          {isCapturing && (
-            <div className="mb-4">
-              <div className="relative">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full aspect-video rounded-2xl border border-gray-200"
-                />
-                <div className="mt-3 flex gap-2 justify-center">
-                  <Button
-                    type="button"
-                    onClick={toggleCamera}
-                    className="bg-gray-500 hover:bg-gray-600 text-white text-xs px-4 py-2 h-8 rounded-full"
-                  >
-                    Ganti Kamera
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={capturePhoto}
-                    className="bg-blue-500 hover:bg-blue-600 text-white text-xs px-4 py-2 h-8 rounded-full"
-                  >
-                    Ambil Foto
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={stopCamera}
-                    className="text-xs px-4 py-2 h-8 rounded-full"
-                  >
-                    Batal
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Image Preview */}
-          {previewUrl && !isCapturing && (
-            <div className="mb-4">
-              <div className="relative">
-                <Image
-                  src={previewUrl}
-                  width={400}
-                  height={300}
-                  alt="Preview"
-                  className="w-full h-48 rounded-lg border border-gray-200 object-cover"
-                />
+              {/* Upload Options */}
+              <div className="flex gap-2 mb-4">
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
-                  onClick={removeImage}
-                  className="absolute top-2 right-2 w-6 h-6 p-0 bg-red-500 hover:bg-red-600 text-white border-red-500 rounded-full"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 text-xs px-3 py-1.5 h-8 rounded-full border-blue-200 text-blue-600 hover:bg-blue-50"
+                  disabled={isCapturing || isUploading}
                 >
-                  <X className="w-3 h-3" />
+                  {isUploading ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Upload className="w-3 h-3" />
+                  )}
+                  {isUploading ? "Memproses..." : "Pilih Foto"}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={startCamera}
+                  className="flex items-center gap-2 text-xs px-3 py-1.5 h-8 rounded-full border-blue-200 text-blue-600 hover:bg-blue-50"
+                  disabled={isCapturing || isUploading}
+                >
+                  <Camera className="w-3 h-3" />
+                  Buka Kamera
                 </Button>
               </div>
-            </div>
-          )}
 
-          {/* Analysis Result */}
-          {analysisResult && (
-            <div className="mb-4">
-              <h3 className="text-sm font-medium text-gray-800 mb-2">
-                Hasil Analisis AI
-              </h3>
-              <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700">
-                <div className="space-y-2">
-                  {/* Only show score and grade if it's a valid grading result */}
-                  {analysisResult.skor_kebersihan !== null && analysisResult.grade !== null && (
-                    <div className="flex justify-start gap-8">
-                      <div className="flex flex-col justify-center items-center">
-                        <span className="font-medium">Skor Kebersihan:</span>
-                        <span
-                          className={`font-bold px-2 py-1 rounded text-4xl ${
-                            analysisResult.grade === "A"
-                              ? "text-green-500"
-                              : analysisResult.grade === "B"
-                              ? "text-blue-500"
-                              : analysisResult.grade === "C"
-                              ? "text-yellow-500"
-                              : analysisResult.grade === "D"
-                              ? "text-orange-600"
-                              : analysisResult.grade === "E"
-                              ? "text-red-500"
-                              : "text-gray-500"
-                          }`}
-                        >
-                          {analysisResult.skor_kebersihan}
-                        </span>
-                      </div>
-                      <div className="flex flex-col justify-center items-center">
-                        <span className="font-medium">Grade:</span>
-                        <span
-                          className={`font-bold px-2 py-1 rounded text-4xl ${
-                            analysisResult.grade === "A"
-                              ? "text-green-500"
-                              : analysisResult.grade === "B"
-                              ? "text-blue-500"
-                              : analysisResult.grade === "C"
-                              ? "text-yellow-500"
-                              : analysisResult.grade === "D"
-                              ? "text-orange-600"
-                              : analysisResult.grade === "E"
-                              ? "text-red-500"
-                              : "text-gray-500"
-                          }`}
-                        >
-                          {analysisResult.grade}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                  <div className={analysisResult.skor_kebersihan !== null && analysisResult.grade !== null ? "mt-3 pt-2 border-t border-gray-200" : ""}>
-                    <p className="text-gray-600 leading-relaxed">
-                      {analysisResult.deskripsi ?? "Tidak tersedia"}
-                    </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileSelect}
+                className="hidden"
+                disabled={isUploading}
+              />
+            </div>
+
+            {/* Loading Upload State */}
+            {isUploading && (
+              <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center justify-center gap-3">
+                  <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                  <span className="text-blue-700 text-sm font-medium">
+                    Memproses gambar...
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Camera Error */}
+            {cameraError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                {cameraError}
+              </div>
+            )}
+
+            {/* Camera View */}
+            {isCapturing && (
+              <div className="mb-4">
+                <div className="relative">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full aspect-video rounded-2xl border border-gray-200"
+                  />
+                  <div className="mt-3 flex gap-2 justify-center">
+                    <Button
+                      type="button"
+                      onClick={toggleCamera}
+                      className="bg-gray-500 hover:bg-gray-600 text-white text-xs px-4 py-2 h-8 rounded-full"
+                      disabled={isUploading}
+                    >
+                      Ganti Kamera
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="bg-blue-500 hover:bg-blue-600 text-white text-xs px-4 py-2 h-8 rounded-full"
+                      disabled={isUploading}
+                    >
+                      {isUploading ? (
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Memproses...
+                        </div>
+                      ) : (
+                        "Ambil Foto"
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={stopCamera}
+                      className="text-xs px-4 py-2 h-8 rounded-full"
+                      disabled={isUploading}
+                    >
+                      Batal
+                    </Button>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+
+            {/* Image Preview */}
+            {previewUrl && !isCapturing && !isUploading && (
+              <div className="mb-4">
+                <div className="relative">
+                  <Image
+                    src={previewUrl}
+                    width={400}
+                    height={300}
+                    alt="Preview"
+                    className="w-full h-48 rounded-lg border border-gray-200 object-cover"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={removeImage}
+                    className="absolute top-2 right-2 w-6 h-6 p-0 bg-red-500 hover:bg-red-600 text-white border-red-500 rounded-full"
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Analysis Result */}
+            {analysisResult && (
+              <div className="mb-4">
+                <h3 className="text-sm font-medium text-gray-800 mb-2">
+                  Hasil Analisis AI
+                </h3>
+                <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700">
+                  <div className="space-y-2">
+                    {/* Only show score and grade if it's a valid grading result */}
+                    {analysisResult.skor_kebersihan !== null &&
+                      analysisResult.grade !== null && (
+                        <div className="flex justify-start gap-8">
+                          <div className="flex flex-col justify-center items-center">
+                            <span className="font-medium">
+                              Skor Kebersihan:
+                            </span>
+                            <span
+                              className={`font-bold px-2 py-1 rounded text-4xl ${
+                                analysisResult.grade === "A"
+                                  ? "text-green-500"
+                                  : analysisResult.grade === "B"
+                                  ? "text-blue-500"
+                                  : analysisResult.grade === "C"
+                                  ? "text-yellow-500"
+                                  : analysisResult.grade === "D"
+                                  ? "text-orange-600"
+                                  : analysisResult.grade === "E"
+                                  ? "text-red-500"
+                                  : "text-gray-500"
+                              }`}
+                            >
+                              {analysisResult.skor_kebersihan}
+                            </span>
+                          </div>
+                          <div className="flex flex-col justify-center items-center">
+                            <span className="font-medium">Grade:</span>
+                            <span
+                              className={`font-bold px-2 py-1 rounded text-4xl ${
+                                analysisResult.grade === "A"
+                                  ? "text-green-500"
+                                  : analysisResult.grade === "B"
+                                  ? "text-blue-500"
+                                  : analysisResult.grade === "C"
+                                  ? "text-yellow-500"
+                                  : analysisResult.grade === "D"
+                                  ? "text-orange-600"
+                                  : analysisResult.grade === "E"
+                                  ? "text-red-500"
+                                  : "text-gray-500"
+                              }`}
+                            >
+                              {analysisResult.grade}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    <div
+                      className={
+                        analysisResult.skor_kebersihan !== null &&
+                        analysisResult.grade !== null
+                          ? "mt-3 pt-2 border-t border-gray-200"
+                          : ""
+                      }
+                    >
+                      <p className="text-gray-600 leading-relaxed">
+                        {analysisResult.deskripsi ?? "Tidak tersedia"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Analysis/Share Button */}
+          <div className="mt-4">
+            {analysisResult ? (
+              <Button
+                onClick={updateReport}
+                className="w-full bg-teal-500 hover:bg-teal-600 text-white py-3 text-sm font-medium rounded-full"
+                disabled={isLoading || isUploading}
+              >
+                {isLoading ? "Bagikan..." : "Bagikan Hasil Analisis"}
+              </Button>
+            ) : (
+              <Button
+                onClick={handleAnalysis}
+                disabled={!selectedImage || isAnalyzing || isUploading}
+                className="w-full bg-teal-500 hover:bg-teal-600 text-white py-3 text-sm font-medium rounded-full"
+              >
+                {isAnalyzing ? (
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Menganalisis...
+                  </div>
+                ) : (
+                  "Analisis"
+                )}
+              </Button>
+            )}
+          </div>
+
+          {/* Hidden canvas for photo capture */}
+          <canvas ref={canvasRef} className="hidden" />
         </div>
-
-        {/* Analysis/Share Button */}
-        <div className="mt-4">
-          {analysisResult ? (
-            <Button
-              onClick={updateReport}
-              className="w-full bg-teal-500 hover:bg-teal-600 text-white py-3 text-sm font-medium rounded-full"
-              disabled={isLoading}
-            >
-              {isLoading ? "Bagikan..." : "Bagikan Hasil Analisis"}  
-            </Button>
-          ) : (
-            <Button
-              onClick={handleAnalysis}
-              disabled={!selectedImage || isAnalyzing}
-              className="w-full bg-teal-500 hover:bg-teal-600 text-white py-3 text-sm font-medium rounded-full"
-            >
-              {isAnalyzing ? "Menganalisis..." : "Analisis"}
-            </Button>
-          )}
-        </div>
-
-        {/* Hidden canvas for photo capture */}
-        <canvas ref={canvasRef} className="hidden" />
-
       </div>
-    </div>
-  );
+    );
 };

@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useState, useRef, Dispatch, SetStateAction } from "react";
-import { Camera, Upload, X } from "lucide-react";
+import { Camera, Upload, X, Loader2 } from "lucide-react";
 import Image from "next/image";
 import { DragCloseDrawer } from "../common/modal";
 import { Input } from "../ui/input";
@@ -11,6 +11,7 @@ import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
 import { mimeToExt } from "@/lib/utils";
 import { useUserStore } from "@/lib/store/user-store";
+import { compressImage } from "@/lib/utils/image-compressor";
 
 const CoordinatePicker = dynamic(() => import("../common/coordinat-picker"), {
   ssr: false,
@@ -28,8 +29,11 @@ export const GradingForm = () => {
   const [isCapturing, setIsCapturing] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false); // State untuk loading upload
   const [open, setOpen] = useState(false);
-  const [facingMode, setFacingMode] = useState<"user" | "environment">("environment"); // Default ke kamera belakang
+  const [facingMode, setFacingMode] = useState<"user" | "environment">(
+    "environment"
+  ); // Default ke kamera belakang
 
   const [analysisResult, setAnalysisResult] =
     useState<AnalysisResultProps | null>(null);
@@ -38,20 +42,36 @@ export const GradingForm = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = event.target.files?.[0];
     if (file) {
-      setSelectedImage(file);
-      const url = URL.createObjectURL(file);
-      setPreviewUrl(url);
+      setIsUploading(true); // Set loading state
       setAnalysisResult(null);
+
+      try {
+        // Kompres gambar jika ukurannya > 2MB
+        const compressedFile = await compressImage(file, 2);
+        setSelectedImage(compressedFile);
+        const url = URL.createObjectURL(compressedFile);
+        setPreviewUrl(url);
+      } catch (error) {
+        console.error("Error compressing image:", error);
+        // Fallback ke file asli jika kompresi gagal
+        setSelectedImage(file);
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+      } finally {
+        setIsUploading(false); // Reset loading state
+      }
     }
   };
 
   const startCamera = async () => {
     setCameraError(null);
     setIsCapturing(true); // Set capturing state immediately to show UI feedback
-    
+
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Camera API not supported in this browser");
@@ -81,7 +101,7 @@ export const GradingForm = () => {
       } catch (backCameraError) {
         console.error("Back camera access failed:", backCameraError);
         console.log("Back camera access failed, trying front camera");
-        
+
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
             video: {
@@ -106,8 +126,10 @@ export const GradingForm = () => {
           }
         } catch (frontCameraError) {
           console.error("Front camera access failed:", frontCameraError);
-          console.log("Front camera access failed, trying generic camera access");
-          
+          console.log(
+            "Front camera access failed, trying generic camera access"
+          );
+
           // Last resort - try generic video access
           try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -158,7 +180,7 @@ export const GradingForm = () => {
   const toggleCamera = async () => {
     // Show loading state or indicator
     setCameraError(null);
-    
+
     // Stop current camera stream
     if (videoRef.current && videoRef.current.srcObject) {
       const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
@@ -194,12 +216,12 @@ export const GradingForm = () => {
     } catch (error) {
       console.error("Error toggling camera:", error);
       setCameraError("Gagal mengganti kamera. Silakan coba lagi.");
-      
+
       // Try the opposite camera as fallback
       try {
         const fallbackMode = newFacingMode === "user" ? "environment" : "user";
         setFacingMode(fallbackMode);
-        
+
         const fallbackStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: fallbackMode,
@@ -207,7 +229,7 @@ export const GradingForm = () => {
             height: { ideal: 720 },
           },
         });
-        
+
         if (videoRef.current) {
           videoRef.current.srcObject = fallbackStream;
           videoRef.current.onloadedmetadata = () => {
@@ -217,11 +239,15 @@ export const GradingForm = () => {
               setIsCapturing(false); // Reset capturing state on error
             });
           };
-          setCameraError("Kamera yang dipilih tidak tersedia, menggunakan kamera alternatif.");
+          setCameraError(
+            "Kamera yang dipilih tidak tersedia, menggunakan kamera alternatif."
+          );
         }
       } catch (fallbackError) {
         console.error("Error with fallback camera:", fallbackError);
-        setCameraError("Tidak dapat mengakses kamera. Silakan periksa izin kamera di browser Anda.");
+        setCameraError(
+          "Tidak dapat mengakses kamera. Silakan periksa izin kamera di browser Anda."
+        );
         setIsCapturing(false); // Reset capturing state on complete failure
       }
     }
@@ -234,20 +260,35 @@ export const GradingForm = () => {
       const context = canvas.getContext("2d");
 
       if (context) {
+        setIsUploading(true); // Set loading state untuk capture
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         context.drawImage(video, 0, 0);
 
         canvas.toBlob(
-          (blob) => {
+          async (blob) => {
             if (blob) {
               const file = new File([blob], "camera-photo.jpg", {
                 type: "image/jpeg",
               });
-              setSelectedImage(file);
-              setPreviewUrl(URL.createObjectURL(file));
-              setAnalysisResult(null);
-              stopCamera();
+
+              try {
+                // Kompres gambar jika ukurannya > 2MB
+                const compressedFile = await compressImage(file, 2);
+                setSelectedImage(compressedFile);
+                setPreviewUrl(URL.createObjectURL(compressedFile));
+                setAnalysisResult(null);
+                stopCamera();
+              } catch (error) {
+                console.error("Error compressing image:", error);
+                // Fallback ke file asli jika kompresi gagal
+                setSelectedImage(file);
+                setPreviewUrl(URL.createObjectURL(file));
+                setAnalysisResult(null);
+                stopCamera();
+              } finally {
+                setIsUploading(false); // Reset loading state
+              }
             }
           },
           "image/jpeg",
@@ -342,7 +383,9 @@ export const GradingForm = () => {
         <div className="bg-white rounded-lg shadow-sm px-6 py-2">
           {/* Foto Label */}
           <div className="mb-4">
-            <h2 className="text-sm font-medium text-gray-700 mb-3">Foto Lokasi untuk di grading</h2>
+            <h2 className="text-sm font-medium text-gray-700 mb-3">
+              Foto Lokasi untuk di grading
+            </h2>
 
             {/* Upload Options */}
             <div className="flex gap-2 mb-4">
@@ -351,10 +394,14 @@ export const GradingForm = () => {
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
                 className="flex items-center gap-2 text-xs px-3 py-1.5 h-8 rounded-full border-blue-200 text-blue-600 hover:bg-blue-50"
-                disabled={isCapturing}
+                disabled={isCapturing || isUploading}
               >
-                <Upload className="w-3 h-3" />
-                Pilih Foto
+                {isUploading ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Upload className="w-3 h-3" />
+                )}
+                {isUploading ? "Memproses..." : "Pilih Foto"}
               </Button>
 
               <Button
@@ -362,7 +409,7 @@ export const GradingForm = () => {
                 variant="outline"
                 onClick={startCamera}
                 className="flex items-center gap-2 text-xs px-3 py-1.5 h-8 rounded-full border-blue-200 text-blue-600 hover:bg-blue-50"
-                disabled={isCapturing}
+                disabled={isCapturing || isUploading}
               >
                 <Camera className="w-3 h-3" />
                 Buka Kamera
@@ -376,8 +423,21 @@ export const GradingForm = () => {
               onChange={handleFileSelect}
               className="hidden"
               aria-label="Upload image file"
+              disabled={isUploading}
             />
           </div>
+
+          {/* Loading Upload State */}
+          {isUploading && (
+            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center justify-center gap-3">
+                <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                <span className="text-blue-700 text-sm font-medium">
+                  Memproses gambar...
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Camera Error */}
           {cameraError && (
@@ -402,6 +462,7 @@ export const GradingForm = () => {
                     type="button"
                     onClick={toggleCamera}
                     className="bg-gray-500 hover:bg-gray-600 text-white text-xs px-4 py-2 h-8 rounded-full"
+                    disabled={isUploading}
                   >
                     Ganti Kamera
                   </Button>
@@ -409,14 +470,23 @@ export const GradingForm = () => {
                     type="button"
                     onClick={capturePhoto}
                     className="bg-blue-500 hover:bg-blue-600 text-white text-xs px-4 py-2 h-8 rounded-full"
+                    disabled={isUploading}
                   >
-                    Ambil Foto
+                    {isUploading ? (
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Memproses...
+                      </div>
+                    ) : (
+                      "Ambil Foto"
+                    )}
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
                     onClick={stopCamera}
                     className="text-xs px-4 py-2 h-8 rounded-full"
+                    disabled={isUploading}
                   >
                     Batal
                   </Button>
@@ -426,7 +496,7 @@ export const GradingForm = () => {
           )}
 
           {/* Image Preview */}
-          {previewUrl && !isCapturing && (
+          {previewUrl && !isCapturing && !isUploading && (
             <div className="mb-4">
               <div className="relative">
                 <Image
@@ -458,51 +528,59 @@ export const GradingForm = () => {
               <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700">
                 <div className="space-y-2">
                   {/* Only show score and grade if it's a valid grading result */}
-                  {analysisResult.skor_kebersihan !== null && analysisResult.grade !== null && (
-                    <div className="flex justify-start gap-8">
-                      <div className="flex flex-col justify-center items-center">
-                        <span className="font-medium">Skor Kebersihan:</span>
-                        <span
-                          className={`font-bold px-2 py-1 rounded text-4xl ${
-                            analysisResult.grade === "A"
-                              ? "text-green-500"
-                              : analysisResult.grade === "B"
-                              ? "text-blue-500"
-                              : analysisResult.grade === "C"
-                              ? "text-yellow-500"
-                              : analysisResult.grade === "D"
-                              ? "text-orange-600"
-                              : analysisResult.grade === "E"
-                              ? "text-red-500"
-                              : "text-gray-500"
-                          }`}
-                        >
-                          {analysisResult.skor_kebersihan}
-                        </span>
+                  {analysisResult.skor_kebersihan !== null &&
+                    analysisResult.grade !== null && (
+                      <div className="flex justify-start gap-8">
+                        <div className="flex flex-col justify-center items-center">
+                          <span className="font-medium">Skor Kebersihan:</span>
+                          <span
+                            className={`font-bold px-2 py-1 rounded text-4xl ${
+                              analysisResult.grade === "A"
+                                ? "text-green-500"
+                                : analysisResult.grade === "B"
+                                ? "text-blue-500"
+                                : analysisResult.grade === "C"
+                                ? "text-yellow-500"
+                                : analysisResult.grade === "D"
+                                ? "text-orange-600"
+                                : analysisResult.grade === "E"
+                                ? "text-red-500"
+                                : "text-gray-500"
+                            }`}
+                          >
+                            {analysisResult.skor_kebersihan}
+                          </span>
+                        </div>
+                        <div className="flex flex-col justify-center items-center">
+                          <span className="font-medium">Grade:</span>
+                          <span
+                            className={`font-bold px-2 py-1 rounded text-4xl ${
+                              analysisResult.grade === "A"
+                                ? "text-green-500"
+                                : analysisResult.grade === "B"
+                                ? "text-blue-500"
+                                : analysisResult.grade === "C"
+                                ? "text-yellow-500"
+                                : analysisResult.grade === "D"
+                                ? "text-orange-600"
+                                : analysisResult.grade === "E"
+                                ? "text-red-500"
+                                : "text-gray-500"
+                            }`}
+                          >
+                            {analysisResult.grade}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex flex-col justify-center items-center">
-                        <span className="font-medium">Grade:</span>
-                        <span
-                          className={`font-bold px-2 py-1 rounded text-4xl ${
-                            analysisResult.grade === "A"
-                              ? "text-green-500"
-                              : analysisResult.grade === "B"
-                              ? "text-blue-500"
-                              : analysisResult.grade === "C"
-                              ? "text-yellow-500"
-                              : analysisResult.grade === "D"
-                              ? "text-orange-600"
-                              : analysisResult.grade === "E"
-                              ? "text-red-500"
-                              : "text-gray-500"
-                          }`}
-                        >
-                          {analysisResult.grade}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                  <div className={analysisResult.skor_kebersihan !== null && analysisResult.grade !== null ? "mt-3 pt-2 border-t border-gray-200" : ""}>
+                    )}
+                  <div
+                    className={
+                      analysisResult.skor_kebersihan !== null &&
+                      analysisResult.grade !== null
+                        ? "mt-3 pt-2 border-t border-gray-200"
+                        : ""
+                    }
+                  >
                     <p className="text-gray-600 leading-relaxed">
                       {analysisResult.deskripsi ?? "Tidak tersedia"}
                     </p>
@@ -517,11 +595,13 @@ export const GradingForm = () => {
         <div className="mt-4">
           {analysisResult ? (
             <>
-              {analysisResult.skor_kebersihan !== null && analysisResult.grade !== null ? (
+              {analysisResult.skor_kebersihan !== null &&
+              analysisResult.grade !== null ? (
                 // Valid grading result - show share button
                 <Button
                   onClick={() => setOpen(true)}
                   className="w-full bg-teal-500 hover:bg-teal-600 text-white py-3 text-sm font-medium rounded-full"
+                  disabled={isUploading}
                 >
                   Bagikan
                 </Button>
@@ -535,6 +615,7 @@ export const GradingForm = () => {
                     }}
                     variant="outline"
                     className="w-full py-3 text-sm font-medium rounded-full"
+                    disabled={isUploading}
                   >
                     Coba Gambar Lain
                   </Button>
@@ -544,10 +625,17 @@ export const GradingForm = () => {
           ) : (
             <Button
               onClick={handleAnalysis}
-              disabled={!selectedImage || isAnalyzing}
+              disabled={!selectedImage || isAnalyzing || isUploading}
               className="w-full bg-teal-500 hover:bg-teal-600 text-white py-3 text-sm font-medium rounded-full"
             >
-              {isAnalyzing ? "Menganalisis..." : "Analisis"}
+              {isAnalyzing ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Menganalisis...
+                </div>
+              ) : (
+                "Analisis"
+              )}
             </Button>
           )}
         </div>
@@ -555,14 +643,17 @@ export const GradingForm = () => {
         {/* Hidden canvas for photo capture */}
         <canvas ref={canvasRef} className="hidden" />
 
-        {selectedImage && analysisResult && analysisResult.skor_kebersihan !== null && analysisResult.grade !== null && (
-          <GradeShareForm
-            selectedImage={selectedImage}
-            analysis_result={analysisResult}
-            open={open}
-            setOpen={setOpen}
-          />
-        )}
+        {selectedImage &&
+          analysisResult &&
+          analysisResult.skor_kebersihan !== null &&
+          analysisResult.grade !== null && (
+            <GradeShareForm
+              selectedImage={selectedImage}
+              analysis_result={analysisResult}
+              open={open}
+              setOpen={setOpen}
+            />
+          )}
       </div>
     </div>
   );
@@ -600,7 +691,7 @@ const GradeShareForm = ({
       alert("Nama harus diisi!");
       return;
     }
-    
+
     if (!form.alamat.trim()) {
       alert("Alamat harus diisi!");
       return;
@@ -626,11 +717,11 @@ const GradeShareForm = ({
       } = await supabase.storage.from("sampahin").getPublicUrl(filePath);
 
       // Tentukan tipe berdasarkan grade
-      const locationType = 
+      const locationType =
         analysis_result?.grade === "A" || analysis_result?.grade === "B"
           ? "clean"
           : "dirty";
-          
+
       const locationRes = await supabase
         .from("locations")
         .insert([
@@ -660,7 +751,7 @@ const GradeShareForm = ({
         .select();
 
       if (cleanlinessRes.error) throw cleanlinessRes.error;
-      
+
       if (cleanlinessRes.data) {
         setOpen(false);
         // Redirect ke /map setelah berhasil submit
@@ -672,27 +763,29 @@ const GradeShareForm = ({
     } finally {
       setLoading(false);
       const fetchMissions = async () => {
-      const supabase = createClient();
-      if (!user?.id) return;
-      const { data, error } = await supabase
-        .from("daily_missions_with_status")
-        .select("*")
-        .eq(`user_id`, user.id)
-        .eq('mission_id', '0e77a8e0-3309-46f2-b3b3-e2d77820429a')
-        .order("point_reward", { ascending: true });
-      if (error) {
-        console.error("Error fetching missions:", error.message);
-      }
-      if (data?.length == 0) {
-        await supabase
-          .from('user_mission_logs')
-          .insert([
-            { user_id: user.id, mission_id: '0e77a8e0-3309-46f2-b3b3-e2d77820429a', completed_at : new Date().toISOString(), point_earned:10},
-          ])
-      }
-
-    };
-    fetchMissions()
+        const supabase = createClient();
+        if (!user?.id) return;
+        const { data, error } = await supabase
+          .from("daily_missions_with_status")
+          .select("*")
+          .eq(`user_id`, user.id)
+          .eq("mission_id", "0e77a8e0-3309-46f2-b3b3-e2d77820429a")
+          .order("point_reward", { ascending: true });
+        if (error) {
+          console.error("Error fetching missions:", error.message);
+        }
+        if (data?.length == 0) {
+          await supabase.from("user_mission_logs").insert([
+            {
+              user_id: user.id,
+              mission_id: "0e77a8e0-3309-46f2-b3b3-e2d77820429a",
+              completed_at: new Date().toISOString(),
+              point_earned: 10,
+            },
+          ]);
+        }
+      };
+      fetchMissions();
     }
   };
 
@@ -745,13 +838,13 @@ const GradeShareForm = ({
                 Batal
               </Button>
             )}
-            <Button 
-              type="submit" 
-              disabled={loading || !form.nama.trim() || !form.alamat.trim()} 
+            <Button
+              type="submit"
+              disabled={loading || !form.nama.trim() || !form.alamat.trim()}
               onClick={submit}
               className={`${
                 loading || !form.nama.trim() || !form.alamat.trim()
-                  ? "opacity-50 cursor-not-allowed" 
+                  ? "opacity-50 cursor-not-allowed"
                   : ""
               }`}
             >
